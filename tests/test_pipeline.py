@@ -319,7 +319,7 @@ def test_weekend_run_exits_zero_without_touching_the_network(tmp_path):
     assert not list(tmp_path.glob("*.xlsx"))
 
 
-def test_happy_path_writes_both_workbooks(monkeypatch, tmp_path):
+def test_happy_path_writes_excel_pdf_and_master(monkeypatch, tmp_path):
     from src import main, sources
 
     monkeypatch.setitem(sources.REGISTRY, "good", GoodSource)
@@ -332,5 +332,71 @@ def test_happy_path_writes_both_workbooks(monkeypatch, tmp_path):
         ]
     )
     assert code == 0
-    assert (tmp_path / "reference_rates_2026-08-07.xlsx").exists()
+    # Excel and PDF live in sibling folders so each can be synced separately.
+    assert (tmp_path / "excel" / "reference_rates_2026-08-07.xlsx").exists()
+    assert (tmp_path / "pdf" / "reference_rates_2026-08-07.pdf").exists()
     assert (tmp_path / "reference_rates_master.xlsx").exists()
+
+
+def test_no_pdf_flag_skips_the_pdf(monkeypatch, tmp_path):
+    from src import main, sources
+
+    monkeypatch.setitem(sources.REGISTRY, "good", GoodSource)
+    code = main.main(
+        [
+            "--date", TODAY.isoformat(),
+            "--sources", "good",
+            "--output-dir", str(tmp_path),
+            "--no-upload",
+            "--no-pdf",
+        ]
+    )
+    assert code == 0
+    assert (tmp_path / "excel" / "reference_rates_2026-08-07.xlsx").exists()
+    assert not (tmp_path / "pdf").exists()
+
+
+# --------------------------------------------------------------------------
+# PDF
+# --------------------------------------------------------------------------
+
+
+def test_pdf_is_a_valid_single_page_file(tmp_path):
+    from src.pdf_writer import write_daily_pdf
+
+    path = write_daily_pdf(sample_rates(), TODAY, tmp_path)
+    assert path.name == "reference_rates_2026-08-07.pdf"
+
+    raw = path.read_bytes()
+    assert raw.startswith(b"%PDF-")
+
+    pdfplumber = pytest.importorskip("pdfplumber")
+    with pdfplumber.open(path) as pdf:
+        assert len(pdf.pages) == 1
+        text = pdf.pages[0].extract_text()
+
+    # The numbers must survive rendering, not just the layout.
+    assert "USD/INR" in text
+    assert "87.4521" in text
+    assert "JPY/INR" in text
+    assert "per 100" in text  # the JPY convention is stated on the page
+
+
+def test_pdf_flags_indicative_data(tmp_path):
+    from src.pdf_writer import write_daily_pdf
+
+    ecb = sample_rates(source="frankfurter-ecb")
+    path = write_daily_pdf(ecb, TODAY, tmp_path)
+
+    pdfplumber = pytest.importorskip("pdfplumber")
+    with pdfplumber.open(path) as pdf:
+        text = pdf.pages[0].extract_text()
+
+    assert "INDICATIVE" in text
+
+
+def test_empty_pdf_is_refused(tmp_path):
+    from src.pdf_writer import write_daily_pdf
+
+    with pytest.raises(ValueError):
+        write_daily_pdf([], TODAY, tmp_path)

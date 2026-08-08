@@ -278,7 +278,61 @@ it, and exits `0` — the data-driven path catches what the list misses.
 
 ---
 
+## Historical backfill
+
+The daily job only ever fetches one date, so history accumulates going
+forward. To load everything FBIL has published since it took over in July
+2018, run the backfill once:
+
+```bash
+python scripts/backfill.py --dry-run      # check coverage first
+python scripts/backfill.py                # 2018-07-01 -> today
+```
+
+Or from GitHub: **Actions → Historical Backfill → Run workflow**.
+
+It does *not* scrape. There are ~2,100 business days in that range, and
+hitting fbil.org.in 2,100 times would be slow, fragile and rude — the kind of
+traffic that gets an IP blocked and takes the daily job down with it. Instead
+it uses Frankfurter's time-series endpoint, which returns a whole date range
+per request: about 32 requests total.
+
+Measured on a full 2018→2026 run: 2,115 business days, 8,460 rates, ~40
+seconds, 26 MB of output (17 MB Excel, 8.4 MB PDF, 360 KB master).
+
+| Flag | Effect |
+|---|---|
+| `--start` / `--end` | Date range. Default `2018-07-01` → today. |
+| `--no-per-date` | Master workbook only — skips the ~4,200 per-date files. |
+| `--no-pdf` | Excel only. |
+| `--require-official` | Abort rather than backfill years of indicative ECB data. |
+| `--dry-run` | Report coverage, write nothing. |
+
+**Pre-2018 is not covered.** Those rates are RBI's own, from before FBIL
+existed, and are only available through RBI's legacy ASP.NET archive. That
+path exists in `src/sources/rbi.py` but expects date-range postbacks I could
+not verify — treat it as a starting point, not a working feature.
+
+Re-running is safe: the master workbook deduplicates on (date, pair), and
+per-date files are simply overwritten.
+
+---
+
 ## Output
+
+Excel and PDF land in sibling folders so each format can be synced, shared or
+archived independently:
+
+```
+data/
+├── excel/reference_rates_YYYY-MM-DD.xlsx   one per business day
+├── pdf/reference_rates_YYYY-MM-DD.pdf      one per business day
+└── reference_rates_master.xlsx             full history, single file
+```
+
+The PDF is a single page per date: the four pairs in a formatted table, plus
+source, retrieval timestamp, and a prominent warning if the data is
+indicative rather than the official fix. Use `--no-pdf` to skip it.
 
 **`reference_rates_YYYY-MM-DD.xlsx`** — the daily snapshot.
 

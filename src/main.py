@@ -26,6 +26,7 @@ from .calendar_utils import (
 )
 from .excel_writer import merge_into_master, read_master, write_daily_workbook
 from .models import EXPECTED_PAIRS, NoDataForDate, Rate, SourceUnavailable
+from .pdf_writer import write_daily_pdf
 from .sources import DEFAULT_CHAIN, build_chain
 
 log = logging.getLogger("rates")
@@ -87,6 +88,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-master",
         action="store_true",
         help="Skip the cumulative history workbook; write the daily file only.",
+    )
+    parser.add_argument(
+        "--no-pdf",
+        action="store_true",
+        help="Skip the date-wise PDF; write the Excel files only.",
     )
     parser.add_argument(
         "--force",
@@ -224,12 +230,22 @@ def run(args: argparse.Namespace) -> int:
             )
         return EXIT_OK
 
-    # --- build daily workbook --------------------------------------------
+    # --- build the daily outputs -----------------------------------------
+    # Excel and PDF go into sibling folders so each format can be synced,
+    # shared or archived independently:
+    #     data/excel/reference_rates_YYYY-MM-DD.xlsx
+    #     data/pdf/reference_rates_YYYY-MM-DD.pdf
     output_dir = Path(args.output_dir)
-    daily_path = write_daily_workbook(rates, target_date, output_dir)
+    daily_path = write_daily_workbook(rates, target_date, output_dir / "excel")
+
+    pdf_path = None
+    if not args.no_pdf:
+        pdf_path = write_daily_pdf(rates, target_date, output_dir / "pdf")
 
     if args.no_upload:
-        log.info("--no-upload set; wrote %s and stopped", daily_path)
+        log.info("--no-upload set; wrote %s", daily_path)
+        if pdf_path:
+            log.info("--no-upload set; wrote %s", pdf_path)
         if not args.no_master:
             local_master = output_dir / args.master_filename
             existing = read_master(local_master)
@@ -246,6 +262,8 @@ def run(args: argparse.Namespace) -> int:
         log.info("Drive folder: %s", folder_name)
 
         drive.upload_or_replace(daily_path)
+        if pdf_path:
+            drive.upload_or_replace(pdf_path)
 
         if not args.no_master:
             local_master = output_dir / args.master_filename
