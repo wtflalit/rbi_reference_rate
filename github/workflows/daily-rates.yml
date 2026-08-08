@@ -1,0 +1,111 @@
+name: Daily Reference Rates
+
+on:
+  schedule:
+    # 09:00 UTC = 14:30 IST, one hour after FBIL's ~13:30 IST publication.
+    # Weekdays only; the script still re-checks the calendar itself, because
+    # GitHub's cron fires in UTC and can drift by several minutes.
+    - cron: "0 9 * * 1-5"
+
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Business date (YYYY-MM-DD). Blank = today in IST."
+        required: false
+        type: string
+      sources:
+        description: "Source chain, comma separated."
+        required: false
+        default: "fbil,rbi,frankfurter"
+        type: string
+      force:
+        description: "Ignore weekend/holiday gating."
+        required: false
+        default: false
+        type: boolean
+      no_upload:
+        description: "Build workbooks but skip the Drive upload."
+        required: false
+        default: false
+        type: boolean
+
+# A late manual run must not race the scheduled one into the same Drive file.
+concurrency:
+  group: daily-rates
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Write service-account key
+        env:
+          SA_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$SA_KEY" ]; then
+            echo "::error::Secret GDRIVE_SERVICE_ACCOUNT_JSON is empty or unset."
+            echo "Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          printf '%s' "$SA_KEY" > service_account.json
+          python -c "import json;json.load(open('service_account.json'))" \
+            || { echo "::error::Secret is not valid JSON — paste the whole key file."; exit 1; }
+
+      - name: Verify Drive access
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_SHARED_DRIVE_ID: ${{ vars.GDRIVE_SHARED_DRIVE_ID }}
+          GOOGLE_SERVICE_ACCOUNT_FILE: service_account.json
+        run: python -m src.main --check-drive
+
+      - name: Fetch rates, build Excel, upload
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GDRIVE_SHARED_DRIVE_ID: ${{ vars.GDRIVE_SHARED_DRIVE_ID }}
+          GOOGLE_SERVICE_ACCOUNT_FILE: service_account.json
+          LOG_LEVEL: INFO
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.date }}" ];    then ARGS="$ARGS --date ${{ inputs.date }}"; fi
+          if [ -n "${{ inputs.sources }}" ]; then ARGS="$ARGS --sources ${{ inputs.sources }}"; fi
+          if [ "${{ inputs.force }}" = "true" ];     then ARGS="$ARGS --force"; fi
+          if [ "${{ inputs.no_upload }}" = "true" ]; then ARGS="$ARGS --no-upload"; fi
+          echo "Running: python -m src.main $ARGS"
+          python -m src.main $ARGS
+
+      # Kept for debugging a bad parse. Retention is short because these are
+      # reproducible and the real copy lives in Drive.
+      - name: Upload workbooks as build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-rates-${{ github.run_id }}
+          path: output/*.xlsx
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # The key file is written into the workspace, which is discarded when
+      # the runner is torn down — but shredding it is free insurance against
+      # a later step or a self-hosted runner leaking it.
+      - name: Shred credentials
+        if: always()
+        run: rm -f service_account.json token.json credentials.json
