@@ -1,0 +1,37 @@
+# Mumbai bank holidays on which FBIL does NOT publish reference rates.
+#
+# ---------------------------------------------------------------------------
+# THIS LIST IS INCOMPLETE ON PURPOSE.
+#
+# Only fixed-date national holidays are pre-filled below, because the movable
+# ones (Holi, Id, Diwali, Dussehra, Gudi Padwa, Muharram, ...) shift every year
+# and must be copied from the official notification rather than guessed.
+#
+# Fill in the rest once a year from:
+#   RBI -> Notifications -> "Holidays under Negotiable Instruments Act"
+#   for Maharashtra / Mumbai, or the FBIL holiday calendar at fbil.org.in
+# ---------------------------------------------------------------------------
+#
+# Weekends are handled in code — do not list Saturdays/Sundays here.
+#
+# This file is an OPTIMISATION, not the source of truth. A missing date costs
+# you nothing: the script simply runs, finds no published rate, logs it, and
+# exits 0. Its only job is to skip pointless network calls on known holidays.
+#
+# Format:  "YYYY-MM-DD": "reason"
+
+2026:
+  "2026-01-26": "Republic Day"
+  "2026-05-01": "Maharashtra Day"
+  "2026-08-15": "Independence Day"
+  "2026-10-02": "Gandhi Jayanti"
+  "2026-12-25": "Christmas"
+  # TODO: add movable holidays for 2026 from the RBI notification.
+
+2027:
+  "2027-01-26": "Republic Day"
+  "2027-05-01": "Maharashtra Day"
+  "2027-08-15": "Independence Day"
+  "2027-10-02": "Gandhi Jayanti"
+  "2027-12-25": "Christmas"
+  # TODO: add movable holidays for 2027 from the RBI notification.
