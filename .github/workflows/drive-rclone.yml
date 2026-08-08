@@ -1,0 +1,116 @@
+name: Drive Sync (rclone)
+
+# Mirrors data/ into Google Drive with rclone.
+#
+# rclone connects as YOU, not as a service account, so the files are owned by
+# you and charged to your own 15 GB. That is what makes this work on a
+# personal Gmail, where a service account cannot write at all.
+#
+# Setup is a single secret: RCLONE_CONFIG, containing the contents of
+# ~/.config/rclone/rclone.conf from a machine where `rclone config` has
+# already authorised Google Drive.
+
+on:
+  schedule:
+    # 09:20 UTC = 14:50 IST, 20 minutes after the daily rates job commits.
+    - cron: "20 9 * * 1-5"
+
+  workflow_dispatch:
+    inputs:
+      dest:
+        description: "Folder path inside your Drive. Created if missing."
+        required: false
+        default: "RBI Reference Rates"
+        type: string
+      mode:
+        description: "copy = never deletes. sync = makes Drive match the repo exactly."
+        required: false
+        default: "copy"
+        type: choice
+        options: ["copy", "sync"]
+      dry_run:
+        description: "Show what would transfer, change nothing."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drive-rclone
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      # Installed straight from rclone.org rather than via a third-party
+      # action, so nothing outside GitHub and rclone ever handles your token.
+      - name: Install rclone
+        run: |
+          curl -fsSL -o /tmp/rclone.zip https://downloads.rclone.org/rclone-current-linux-amd64.zip
+          unzip -q /tmp/rclone.zip -d /tmp
+          sudo cp /tmp/rclone-*-linux-amd64/rclone /usr/local/bin/rclone
+          sudo chmod +x /usr/local/bin/rclone
+          rclone version
+
+      - name: Write rclone config
+        env:
+          RCLONE_CONFIG_CONTENT: ${{ secrets.RCLONE_CONFIG }}
+        run: |
+          if [ -z "$RCLONE_CONFIG_CONTENT" ]; then
+            echo "::error::Secret RCLONE_CONFIG is empty or unset."
+            exit 1
+          fi
+          mkdir -p ~/.config/rclone
+          # printf, not echo: the token is JSON and echo mangles backslashes.
+          printf '%s\n' "$RCLONE_CONFIG_CONTENT" > ~/.config/rclone/rclone.conf
+          chmod 600 ~/.config/rclone/rclone.conf
+
+      - name: Verify the remote works
+        run: |
+          if ! rclone listremotes | grep -q .; then
+            echo "::error::No remote found. Check the RCLONE_CONFIG secret contains the full [gdrive] block."
+            exit 1
+          fi
+          echo "Remotes configured:"
+          rclone listremotes
+          echo "Drive quota:"
+          rclone about gdrive: || echo "(about not supported, continuing)"
+
+      - name: Transfer
+        env:
+          DEST: ${{ inputs.dest || 'RBI Reference Rates' }}
+          MODE: ${{ inputs.mode || 'copy' }}
+        run: |
+          FLAGS="--transfers 8 --checkers 16 --fast-list --stats 30s --stats-one-line"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            FLAGS="$FLAGS --dry-run"
+            echo "DRY RUN — nothing will be written."
+          fi
+
+          # rclone compares size and modification time, so a re-run transfers
+          # only what actually changed. No manifest needed; the remote is the
+          # source of truth for what is already there.
+          echo "rclone ${MODE} data/ gdrive:${DEST}"
+          rclone "${MODE}" data/ "gdrive:${DEST}" $FLAGS
+
+      - name: What is in Drive now
+        if: inputs.dry_run != true
+        run: |
+          DEST="${{ inputs.dest || 'RBI Reference Rates' }}"
+          echo "Excel: $(rclone lsf "gdrive:${DEST}/excel" 2>/dev/null | wc -l)"
+          echo "PDF:   $(rclone lsf "gdrive:${DEST}/pdf" 2>/dev/null | wc -l)"
+          echo "Top level:"
+          rclone lsf "gdrive:${DEST}" 2>/dev/null | head -20
+
+      # The runner is destroyed anyway, but shredding the token costs nothing.
+      - name: Shred credentials
+        if: always()
+        run: rm -f ~/.config/rclone/rclone.conf
