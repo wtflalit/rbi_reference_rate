@@ -51,7 +51,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Fetch rates and build workbooks
+      - - name: Fetch rates, build Excel and PDF
         env:
           LOG_LEVEL: INFO
         run: |
@@ -61,7 +61,6 @@ jobs:
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
           echo "Running: python -m src.main $ARGS"
           python -m src.main $ARGS
-
       - name: Commit new data
         run: |
           git config user.name  "github-actions[bot]"
