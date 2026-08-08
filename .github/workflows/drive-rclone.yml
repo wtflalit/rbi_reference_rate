@@ -84,22 +84,38 @@ jobs:
           echo "Drive quota:"
           rclone about gdrive: || echo "(about not supported, continuing)"
 
-      - name: Transfer
+      - - name: Transfer
         env:
-          DEST: ${{ inputs.dest || 'RBI Reference Rates' }}
           MODE: ${{ inputs.mode || 'copy' }}
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
+          if [ -z "$FOLDER_ID" ]; then
+            echo "::error::Secret GDRIVE_FOLDER_ID is not set."
+            exit 1
+          fi
+
           FLAGS="--transfers 8 --checkers 16 --fast-list --stats 30s --stats-one-line"
+          FLAGS="$FLAGS --drive-root-folder-id ${FOLDER_ID}"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             FLAGS="$FLAGS --dry-run"
             echo "DRY RUN — nothing will be written."
           fi
 
-          # rclone compares size and modification time, so a re-run transfers
-          # only what actually changed. No manifest needed; the remote is the
-          # source of truth for what is already there.
-          echo "rclone ${MODE} data/ gdrive:${DEST}"
-          rclone "${MODE}" data/ "gdrive:${DEST}" $FLAGS
+          # Addressing the destination by ID rather than by path means you can
+          # move or rename the folder in Drive without breaking the sync.
+          echo "rclone ${MODE} data/ gdrive: (folder id ${FOLDER_ID})"
+          rclone "${MODE}" data/ "gdrive:" $FLAGS
+
+      - name: What is in Drive now
+        if: inputs.dry_run != true
+        env:
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          ID_FLAG="--drive-root-folder-id ${FOLDER_ID}"
+          echo "Excel: $(rclone lsf gdrive:excel $ID_FLAG 2>/dev/null | wc -l)"
+          echo "PDF:   $(rclone lsf gdrive:pdf   $ID_FLAG 2>/dev/null | wc -l)"
+          echo "Top level:"
+          rclone lsf gdrive: $ID_FLAG 2>/dev/null | head -20
 
       - name: What is in Drive now
         if: inputs.dry_run != true
