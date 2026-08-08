@@ -2,7 +2,7 @@ name: Sync files to Google Drive
 
 on:
   push:
-    branches: [ main ]  # Triggers on every push to the main branch
+    branches: [ main ]
 
 jobs:
   upload:
@@ -11,10 +11,58 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Upload files to Google Drive
-        uses: samuelint/google-drive-upload@v1.1.3  # Or any other Drive upload action you prefer
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          folder_id: ${{ secrets.DRIVE_FOLDER_ID }}
-          service_account: ${{ secrets.GDRIVE_CREDENTIALS }} # The base64-encoded key
-          source_path: "path/to/your/files/*.xlsx path/to/your/files/*.pdf" # Update this to point to your Excel and PDF files
-          # destination_path: "subfolder" # Optional: specify a subfolder within your Drive folder
+          python-version: '3.10'
+
+      - name: Install Google Drive API
+        run: |
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Upload to Google Drive
+        env:
+          CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+          FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+        run: |
+          python - <<EOF
+          import base64
+          import json
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          import glob
+
+          # Decode credentials
+          creds_json = base64.b64decode(os.environ['CREDENTIALS']).decode('utf-8')
+          creds_dict = json.loads(creds_json)
+          credentials = service_account.Credentials.from_service_account_info(creds_dict)
+          drive_service = build('drive', 'v3', credentials=credentials)
+
+          folder_id = os.environ['FOLDER_ID']
+
+          # Find all Excel and PDF files
+          files_to_upload = []
+          files_to_upload.extend(glob.glob('*.xlsx'))
+          files_to_upload.extend(glob.glob('*.xls'))
+          files_to_upload.extend(glob.glob('*.pdf'))
+
+          if not files_to_upload:
+              print("No Excel or PDF files found!")
+              exit(1)
+
+          for file_path in files_to_upload:
+              print(f"Uploading: {file_path}")
+              media = MediaFileUpload(file_path, resumable=True)
+              file_metadata = {
+                  'name': os.path.basename(file_path),
+                  'parents': [folder_id]
+              }
+              file = drive_service.files().create(
+                  body=file_metadata,
+                  media_body=media,
+                  fields='id'
+              ).execute()
+              print(f"Uploaded {file_path} with ID: {file.get('id')}")
+          EOF
