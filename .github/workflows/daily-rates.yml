@@ -67,18 +67,22 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Rebase is the wrong tool here. Two runs on the same day produce
+          # byte-different xlsx files (timestamps are embedded in the format),
+          # git cannot merge binaries, and the rebase stops on an add/add
+          # conflict. Instead: move onto the latest origin first, then let the
+          # freshly generated files replace whatever is already there.
+          git fetch origin ${{ github.ref_name }}
+          git reset --mixed origin/${{ github.ref_name }}
+
           git add data/
 
-          # On a weekend, holiday, or a day with nothing published, the script
-          # writes no file — so there is simply nothing staged. Exit quietly
-          # rather than failing, otherwise every holiday is a red build.
+          # Weekend, holiday, or nothing published: the script wrote no file,
+          # so nothing is staged. Exit quietly rather than failing.
           if git diff --staged --quiet; then
             echo "No new data for today — nothing to commit."
             exit 0
           fi
 
           git commit -m "Reference rates: $(date -u +%Y-%m-%d)"
-
-          # Re-sync before pushing in case a manual run landed first.
-          git pull --rebase --autostash origin ${{ github.ref_name }}
           git push origin HEAD:${{ github.ref_name }}
